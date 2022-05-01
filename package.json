@@ -1,0 +1,22 @@
+{
+  "name": "instagram-downloader",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@juliendu11/instagram-downloader": "^0.2.0",
+    "axios": "^0.27.2",
+    "chalk": "^2.4.2",
+    "cheerio": "^1.0.0-rc.10",
+    "inquirer": "^8.2.4",
+    "node-fetch": "^2.6.7",
+    "node-html-parser": "^5.3.3",
+    "readline-sync": "^1.4.10"
+  }
+}
