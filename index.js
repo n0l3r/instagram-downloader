@@ -1,9 +1,7 @@
 const fetch = require("node-fetch");
 const chalk = require("chalk");
-const readline = require("readline-sync");
 const inquirer = require("inquirer");
 const cheerio = require("cheerio");
-const { parse } = require("node-html-parser");
 const fs = require("fs");
 
 const getChoice = () => new Promise((resolve, reject) => {
@@ -12,88 +10,69 @@ const getChoice = () => new Promise((resolve, reject) => {
             type: "list",
             name: "choice",
             message: "Choose a option",
-            choices: ["Foto/Video", "Story", "Reels", "Exit"]
+            choices: ["Feed", "TV", "Reels", "Story", "Highlights", "Exit"]
         }
     ])
     .then(res => resolve(res))
     .catch(err => reject(err));
 });
 
-const urlParser = (url) => {
-    const urlSplit = url.split("/");
-    const last = urlSplit[urlSplit.length - 1];
-    
-    if(last[0] === ("?") || last === ""){
-        return urlSplit[urlSplit.length - 2];
-    }
-    return last;
-};
-
-const urlChecker = (url) => {
-    const reg = new RegExp("(https?://(?:www.)?instagram.com/([^/?#&]+)).*");
-    const match = url.match(reg);
-    return match;
-}
-
-const downloadMedia = (url, type) => new Promise((resolve, reject) => {
-    const idVideo = Math.floor(Math.random() * 9999999999);
-    const fileName = `${idVideo}.${type ? "mp4" : "jpg"}`;
-    console.log(chalk.blue(`[*] Downloading (${fileName})`));
-    const res = fetch(url);
-    res.then(res => {
-        const folder = `downloads/`;
-        const file = fs.createWriteStream(folder+fileName);
-        res.body.pipe(file);
-        file.on("finish", () => {
-            file.close();
-            resolve(fileName);
-        });
+const getInput = (teks) => new Promise((resolve, reject) => {
+    inquirer.prompt([
+        {
+            name: "input",
+            message: teks
+        }
+    ])
+    .then(res => {
+        resolve(res)
     })
     .catch(err => reject(err));
 });
 
-const getPostInstagram = (url) => new Promise((resolve, reject) => {
-    const shortCodeMedia = urlParser(url);
-    const API_URL = `https://www.instagram.com/p/${shortCodeMedia}/embed`;
-    fetch(API_URL, {
-        headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.149 Safari/537.36"
-        }
-    })
-    .then(res =>  res.text())
-    .then(body => resolve(body))
-    .catch(err => reject(err));   
+
+const urlChecker = (url) => {
+    const reg = new RegExp("(https:\/\/www\.instagram\.com\/(?:p|reel|tv)\/[a-zA-Z0-9_-]{11}\/)");
+    const match = url.match(reg);
+    return match;
+}
+
+const downloadMediaFromUrl = (urls) => new Promise((resolve, reject) => {
+    console.log(chalk.blue("[*] Processing..."));
+    urls.forEach((url) => {
+        const fileName = new URL(url).pathname.split("/").pop();
+        const res = fetch(url);
+        res.then(res => {
+            const folder = `downloads/`;
+            const file = fs.createWriteStream(folder+fileName);
+            res.body.pipe(file);
+            file.on("finish", () => {
+                file.close();          
+            })
+            file.on("error", (err) => {
+                reject(err);
+            });
+        })
+        .catch(err => reject(err));
+    });
+    resolve();
 });
 
-const getVideoLinkFromHtml = (html) => {
-    var json = "{\"" + html.substring(html.search("video_url"), html.search("video_url") + 1000);
-    json = json.substring(0, crop.search(",")) + "}";
-    return JSON.parse(json).video_url;
+const scrapeHtmlFromUrl = async (url) => {
+    const matching = await urlChecker(url);
+    if(!matching){
+        console.log(chalk.red("[X] URL not valid"));
+        return;
+    } 
+    const urlApi = `${matching[0]}embed/`;
+    const res = await fetch(urlApi);
+    const html = await res.text();
+    
+    return html;
 }
 
-async function downloadSingleMedia(html){
-    var urlMedia = "";
-    const res = cheerio.load(html).html();
-    const root = parse(html);
-
-    if (res.search("video_url") != -1){
-        urlMedia = getVideoLinkFromHtml(res);
-        type = true;
-    }else{
-        urlMedia = root.querySelector('img.EmbeddedMediaImage').getAttribute("src");
-        type = false;
-    }
-    while (urlMedia.search("&amp;") != -1) {
-        urlMedia = urlMedia.replace("&amp;", "&");
-    }
-    return [urlMedia, type];    
-}
-
-async function downloadMediaAlbum(url){
-    var urls = [];
-
-    const html = await getPostInstagram(url);
-    var json = "";
+const getJsonFromHtml = async (html) => {
+    var json = null;
     const $ = cheerio.load(html);
     $("script").each((i, el) => {
         const script = $(el).html();
@@ -104,40 +83,37 @@ async function downloadMediaAlbum(url){
             json = JSON.parse(res);
         }
     });
-    if(json != null){
-        if(json.shortcode_media.__typename === "GraphVideo"){
-            const urlMedia = json.shortcode_media.video_url;
-            const type = true;
-            urls.push([urlMedia, type]);
-        } else if(json.shortcode_media.__typename === "GraphSidecar"){
-            const data = json.shortcode_media.edge_sidecar_to_children.edges;
-            console.log(chalk.green(`[+] ${data.length} media found in this album`));
-            for(let i = 0; i < data.length; i++){
-                const type = data[i].node.is_video;
-                var urlMedia = "";
-                if(type){
-                    urlMedia = data[i].node.video_url;
-                } else{
-                    urlMedia = data[i].node.display_resources[2].src;
-                }
-                urls.push([urlMedia, type]);
-            }
+    return json;
+}
+
+const getUrlFromHtml = async (html) => {
+    const $ = cheerio.load(html);
+    const url = $(".EmbeddedMediaImage").attr("src");
+    return [url];
+}
+
+const getUrlFromJson = async (json) => {
+    const data = json.shortcode_media;
+    const isSingle = (data.edge_sidecar_to_children.edges) ? false : true;
+
+    if (isSingle) {
+        if(data.is_video){
+            return [data.video_url];
+        } else{
+            return [data.display_url];
         }
     } else{
-        urlMedia = await downloadSingleMedia(html);
-        urls.push(urlMedia);
+        const urls = [];
+        data.edge_sidecar_to_children.edges.forEach(edge => {
+            if(edge.node.is_video){
+                urls.push(edge.node.video_url);
+            } else{
+                urls.push(edge.node.display_url);
+            }
+        });
+        return urls;
     }
-
-    if(urls.length > 0){
-        for(let i = 0; i < urls.length; i++){
-            const url = urls[i][0];
-            const type = urls[i][1];
-            const fileName = await downloadMedia(url, type);
-            console.log(chalk.green(`[+] ${fileName} downloaded`));
-        }
-    }
-};
-
+}
 
 (async () => {
     console.log(chalk.magenta("Starting Instagram Downloader..."));
@@ -148,18 +124,37 @@ async function downloadMediaAlbum(url){
         return;
     }
 
-    if(choice.choice == "Foto/Video"){
-        const url = readline.question(chalk.yellow("[*] Enter the URL of the post: "));
-        if (!url) {
+    if(choice.choice == "Feed" || choice.choice == "TV" || choice.choice == "Reels"){
+        const getInputUrl = await getInput("Enter the URL of the post: ");
+        const inputUrl = getInputUrl.input;
+        if (!inputUrl) {
             console.log(chalk.red("[x] URL is required"));
             return;
         }
-        const match = urlChecker(url);
-        if(!match){
-            console.log(chalk.red("[x] Invalid URL"));
-            return;
+
+        const html = await scrapeHtmlFromUrl(inputUrl)
+        const json = await getJsonFromHtml(html);
+        var urls = [];
+        if(json){
+            // console.log(chalk.green("[*] Found JSON"));
+            urls = await getUrlFromJson(json);
+        } else{
+            // console.log(chalk.green("[*] Found HTML"));
+            urls = await getUrlFromHtml(html);
         }
-        downloadMediaAlbum(url);
+        
+        if(urls.length > 0){
+            console.log(chalk.green(`[!] ${urls.length} media found`));
+            downloadMediaFromUrl(urls)
+            .then(() => {
+                console.log(chalk.green(`[+] Successfully downloaded ${urls.length} media`));
+            })
+            .catch(err => {
+                console.log(chalk.red(`[x] ${err}`));
+            });
+        } else{
+            console.log(chalk.red("[X] Error getting URL"));
+        }
     } else{
         console.log(chalk.yellow("[!] Coming soon..."));
     }
