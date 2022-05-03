@@ -94,7 +94,7 @@ const getUrlFromHtml = async (html) => {
 
 const getUrlFromJson = async (json) => {
     const data = json.shortcode_media;
-    const isSingle = (data.edge_sidecar_to_children.edges) ? false : true;
+    const isSingle = (data.edge_sidecar_to_children) ? false : true;
 
     if (isSingle) {
         if(data.is_video){
